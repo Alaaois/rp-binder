@@ -1,0 +1,12 @@
+/venv/
+/dist/
+/build/
+.idea
+
+### macOS ###
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+__pycache__/
+.env
