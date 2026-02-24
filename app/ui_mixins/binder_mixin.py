@@ -1,13 +1,23 @@
 import ctypes
 import platform
 import tkinter as tk
+import time
 from tkinter import messagebox
 
 import customtkinter as ctk
 
 from app.binder import normalize_hotkey
-from app.clipboard import copy_to_clipboard, paste_text_to_active_window
+from app.clipboard import (
+    copy_to_clipboard,
+    paste_text_to_active_window,
+    release_pressed_modifiers_windows,
+    send_hotkey_to_active_window,
+)
 from app.constants import (
+    CHAT_OPEN_DELAY_DEFAULT_MS,
+    CHAT_OPEN_DELAY_MAX_MS,
+    CHAT_OPEN_DELAY_MIN_MS,
+    CHAT_OPEN_HOTKEY_DEFAULT,
     PANIC_HOTKEY_DEFAULT,
     PASTE_ENTER_DEFAULT_DELAY_MS,
     PASTE_ENTER_MAX_DELAY_MS,
@@ -25,6 +35,22 @@ class UIBinderMixin:
         except Exception:
             parsed = PASTE_ENTER_DEFAULT_DELAY_MS
         return max(PASTE_ENTER_MIN_DELAY_MS, min(PASTE_ENTER_MAX_DELAY_MS, parsed))
+
+    @staticmethod
+    def _parse_chat_open_delay_ms(value: str | int | float | None) -> int:
+        try:
+            parsed = int(value)  # type: ignore[arg-type]
+        except Exception:
+            parsed = CHAT_OPEN_DELAY_DEFAULT_MS
+        return max(CHAT_OPEN_DELAY_MIN_MS, min(CHAT_OPEN_DELAY_MAX_MS, parsed))
+
+    @staticmethod
+    def _normalize_chat_open_hotkey(value: str | None) -> str:
+        candidate = str(value or "").strip() or CHAT_OPEN_HOTKEY_DEFAULT
+        try:
+            return normalize_hotkey(candidate)
+        except ValueError:
+            return CHAT_OPEN_HOTKEY_DEFAULT
 
     def _get_panic_hotkey(self) -> str:
         raw_value = str(self.user_settings.get("panic_hotkey", PANIC_HOTKEY_DEFAULT)).strip() or PANIC_HOTKEY_DEFAULT
@@ -354,7 +380,7 @@ class UIBinderMixin:
             enabled = bool(item.get("enabled", False))
             hotkey = str(item.get("hotkey", "")).strip()
             send_mode = str(item.get("send_mode", "copy")).strip().lower()
-            if enabled and hotkey and send_mode in {"copy", "paste", "paste_enter"}:
+            if enabled and hotkey and send_mode in {"copy", "paste", "paste_enter", "chat_send"}:
                 bindings[item_id] = hotkey
         return bindings
 
@@ -413,7 +439,51 @@ class UIBinderMixin:
             self._copy_text_to_clipboard(text, status_text="Скопировано по бинду ✅")
             return
 
+        # Мгновенно снимаем зажатые модификаторы, чтобы hotkey не ломал игровой ввод.
+        release_pressed_modifiers_windows()
+
         delay_ms = self._parse_delay_ms(item.get("delay_ms", PASTE_ENTER_DEFAULT_DELAY_MS))
+        if send_mode == "chat_send":
+            chat_open_key = self._normalize_chat_open_hotkey(item.get("chat_open_hotkey", CHAT_OPEN_HOTKEY_DEFAULT))
+            chat_open_delay_ms = self._parse_chat_open_delay_ms(
+                item.get("chat_open_delay_ms", CHAT_OPEN_DELAY_DEFAULT_MS)
+            )
+            send_each_line = bool(item.get("chat_send_each_line", False))
+            if send_each_line:
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                if not lines:
+                    lines = [text]
+            else:
+                lines = [text]
+
+            for line in lines:
+                if not send_hotkey_to_active_window(chat_open_key):
+                    self._copy_text_to_clipboard(text, status_text="Скопировано (не удалось открыть чат)")
+                    return
+                if chat_open_delay_ms > 0:
+                    time.sleep(chat_open_delay_ms / 1000.0)
+
+                pasted_chat = paste_text_to_active_window(
+                    self,
+                    line,
+                    press_enter=True,
+                    enter_delay_seconds=delay_ms / 1000.0,
+                    restore_clipboard=False,
+                )
+                if not pasted_chat:
+                    self._copy_text_to_clipboard(text, status_text="Скопировано (чат/вставка недоступны)")
+                    return
+
+            if send_each_line and len(lines) > 1:
+                self._set_status(
+                    f"Чат: отправлено {len(lines)} строк ✅ ({chat_open_key}, {chat_open_delay_ms}/{delay_ms} мс)"
+                )
+            else:
+                self._set_status(
+                    f"Чат: {chat_open_key} -> вставка+Enter ✅ ({chat_open_delay_ms}/{delay_ms} мс)"
+                )
+            return
+
         should_press_enter = send_mode == "paste_enter"
         pasted = paste_text_to_active_window(
             self,
@@ -452,6 +522,14 @@ class UIBinderMixin:
         if send_mode == "paste_enter":
             delay_ms = self._parse_delay_ms(self.selected_item.get("delay_ms", PASTE_ENTER_DEFAULT_DELAY_MS))
             mode_label = f"вставка+Enter ({delay_ms} мс)"
+        elif send_mode == "chat_send":
+            delay_ms = self._parse_delay_ms(self.selected_item.get("delay_ms", PASTE_ENTER_DEFAULT_DELAY_MS))
+            chat_open_key = self._normalize_chat_open_hotkey(self.selected_item.get("chat_open_hotkey", CHAT_OPEN_HOTKEY_DEFAULT))
+            chat_open_delay_ms = self._parse_chat_open_delay_ms(
+                self.selected_item.get("chat_open_delay_ms", CHAT_OPEN_DELAY_DEFAULT_MS)
+            )
+            per_line_suffix = ", по строкам" if bool(self.selected_item.get("chat_send_each_line", False)) else ""
+            mode_label = f"чат({chat_open_key})+вставка+Enter ({chat_open_delay_ms}/{delay_ms} мс{per_line_suffix})"
         elif send_mode == "paste":
             mode_label = "вставка"
         else:
@@ -487,7 +565,7 @@ class UIBinderMixin:
 
         ctk.CTkLabel(
             frame,
-            text="Настройка: хоткей, режим отправки, задержка и состояние.",
+            text="Настройка: хоткей, режим, открытие чата, задержки и состояние.",
             justify="left",
         ).pack(anchor="w", pady=(0, 8))
 
@@ -516,10 +594,43 @@ class UIBinderMixin:
 
         ctk.CTkLabel(mode_row, text="Режим:").grid(row=0, column=0, padx=(0, 8), sticky="w")
         mode_var = tk.StringVar(value=str(item.get("send_mode", "copy")).strip().lower() or "copy")
-        if mode_var.get() not in {"copy", "paste", "paste_enter"}:
+        if mode_var.get() not in {"copy", "paste", "paste_enter", "chat_send"}:
             mode_var.set("copy")
-        mode_selector = ctk.CTkSegmentedButton(mode_row, values=["copy", "paste", "paste_enter"], variable=mode_var)
+        mode_selector = ctk.CTkSegmentedButton(mode_row, values=["copy", "paste", "paste_enter", "chat_send"], variable=mode_var)
         mode_selector.grid(row=0, column=1, sticky="ew")
+
+        chat_row = ctk.CTkFrame(frame, fg_color="transparent")
+        chat_row.pack(fill="x", pady=(0, 8))
+        chat_row.grid_columnconfigure(1, weight=1)
+        chat_row.grid_columnconfigure(3, weight=1)
+
+        ctk.CTkLabel(chat_row, text="Открыть чат:").grid(row=0, column=0, padx=(0, 8), sticky="w")
+        chat_open_hotkey_var = tk.StringVar(
+            value=self._normalize_chat_open_hotkey(item.get("chat_open_hotkey", CHAT_OPEN_HOTKEY_DEFAULT))
+        )
+        chat_open_hotkey_entry = ctk.CTkEntry(chat_row, textvariable=chat_open_hotkey_var)
+        chat_open_hotkey_entry.grid(row=0, column=1, sticky="ew")
+
+        ctk.CTkLabel(chat_row, text="Задержка чата (мс):").grid(row=0, column=2, padx=(12, 8), sticky="w")
+        chat_open_delay_var = tk.StringVar(
+            value=str(
+                self._parse_chat_open_delay_ms(
+                    item.get("chat_open_delay_ms", CHAT_OPEN_DELAY_DEFAULT_MS)
+                )
+            )
+        )
+        chat_open_delay_entry = ctk.CTkEntry(chat_row, textvariable=chat_open_delay_var)
+        chat_open_delay_entry.grid(row=0, column=3, sticky="ew")
+
+        chat_per_line_var = tk.BooleanVar(value=bool(item.get("chat_send_each_line", False)))
+        chat_per_line_switch = ctk.CTkSwitch(
+            frame,
+            text="Для каждой строки отправлять отдельный Enter",
+            variable=chat_per_line_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        chat_per_line_switch.pack(anchor="w", pady=(0, 8))
 
         delay_row = ctk.CTkFrame(frame, fg_color="transparent")
         delay_row.pack(fill="x", pady=(0, 10))
@@ -533,11 +644,21 @@ class UIBinderMixin:
         info_var = tk.StringVar(value="")
         ctk.CTkLabel(frame, textvariable=info_var, justify="left").pack(anchor="w", pady=(0, 6))
 
-        def refresh_delay_state():
-            if mode_var.get() == "paste_enter":
+        def refresh_mode_fields_state():
+            mode = mode_var.get()
+            if mode in {"paste_enter", "chat_send"}:
                 delay_entry.configure(state="normal")
             else:
                 delay_entry.configure(state="disabled")
+
+            if mode == "chat_send":
+                chat_open_hotkey_entry.configure(state="normal")
+                chat_open_delay_entry.configure(state="normal")
+                chat_per_line_switch.configure(state="normal")
+            else:
+                chat_open_hotkey_entry.configure(state="disabled")
+                chat_open_delay_entry.configure(state="disabled")
+                chat_per_line_switch.configure(state="disabled")
 
         def capture_hotkey():
             try:
@@ -556,8 +677,8 @@ class UIBinderMixin:
                 enabled_var.set(True)
 
         capture_btn.configure(command=capture_hotkey)
-        mode_selector.configure(command=lambda _value: refresh_delay_state())
-        refresh_delay_state()
+        mode_selector.configure(command=lambda _value: refresh_mode_fields_state())
+        refresh_mode_fields_state()
 
         actions = ctk.CTkFrame(frame, fg_color="transparent")
         actions.pack(fill="x")
@@ -588,10 +709,22 @@ class UIBinderMixin:
                 return
 
             selected_mode = mode_var.get().strip().lower()
-            if selected_mode not in {"copy", "paste", "paste_enter"}:
+            if selected_mode not in {"copy", "paste", "paste_enter", "chat_send"}:
                 selected_mode = "copy"
 
             selected_delay = self._parse_delay_ms(delay_var.get().strip() or PASTE_ENTER_DEFAULT_DELAY_MS)
+            selected_chat_open_hotkey = self._normalize_chat_open_hotkey(chat_open_hotkey_var.get().strip())
+            selected_chat_open_delay = self._parse_chat_open_delay_ms(
+                chat_open_delay_var.get().strip() or CHAT_OPEN_DELAY_DEFAULT_MS
+            )
+
+            if selected_mode == "chat_send":
+                raw_chat_hotkey = chat_open_hotkey_var.get().strip()
+                try:
+                    selected_chat_open_hotkey = normalize_hotkey(raw_chat_hotkey or CHAT_OPEN_HOTKEY_DEFAULT)
+                except ValueError as error:
+                    messagebox.showwarning("Бинды", f"Клавиша открытия чата: {error}", parent=dialog)
+                    return
 
             if enabled and normalized_hotkey:
                 conflict_item = self._find_scope_hotkey_conflict(normalized_hotkey, current_item=item)
@@ -612,6 +745,9 @@ class UIBinderMixin:
                 "enabled": enabled,
                 "send_mode": selected_mode,
                 "delay_ms": selected_delay,
+                "chat_open_hotkey": selected_chat_open_hotkey,
+                "chat_open_delay_ms": selected_chat_open_delay,
+                "chat_send_each_line": bool(chat_per_line_var.get()) if selected_mode == "chat_send" else False,
             })
 
         ctk.CTkButton(actions, text="Сохранить", command=save_bind).grid(row=0, column=0, padx=(0, 6), sticky="ew")
@@ -619,7 +755,7 @@ class UIBinderMixin:
 
         dialog.focus_force()
         dialog.grab_set()
-        self._center_popup(dialog, fallback_width=560, fallback_height=280)
+        self._center_popup(dialog, fallback_width=640, fallback_height=320)
         hotkey_entry.focus_set()
         dialog.wait_window()
 
@@ -631,6 +767,13 @@ class UIBinderMixin:
         item["enabled"] = bool(bind_config.get("enabled", False))
         item["send_mode"] = str(bind_config.get("send_mode", "copy")).strip().lower()
         item["delay_ms"] = self._parse_delay_ms(bind_config.get("delay_ms", PASTE_ENTER_DEFAULT_DELAY_MS))
+        item["chat_open_hotkey"] = self._normalize_chat_open_hotkey(
+            str(bind_config.get("chat_open_hotkey", CHAT_OPEN_HOTKEY_DEFAULT))
+        )
+        item["chat_open_delay_ms"] = self._parse_chat_open_delay_ms(
+            bind_config.get("chat_open_delay_ms", CHAT_OPEN_DELAY_DEFAULT_MS)
+        )
+        item["chat_send_each_line"] = bool(bind_config.get("chat_send_each_line", False))
         if not item.get("item_id"):
             item["item_id"] = self.data_manager.generate_item_id()
 

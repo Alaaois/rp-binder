@@ -8,6 +8,9 @@ class PhraseItem(TypedDict, total=False):
     hotkey: str
     send_mode: str
     delay_ms: int
+    chat_open_hotkey: str
+    chat_open_delay_ms: int
+    chat_send_each_line: bool
     enabled: bool
     variables: list[str]
     tags: list[str]

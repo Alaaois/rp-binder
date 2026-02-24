@@ -8,6 +8,10 @@ from typing import Dict, Any
 
 from app.constants import (
     APP_NAME,
+    CHAT_OPEN_DELAY_DEFAULT_MS,
+    CHAT_OPEN_DELAY_MAX_MS,
+    CHAT_OPEN_DELAY_MIN_MS,
+    CHAT_OPEN_HOTKEY_DEFAULT,
     PANIC_HOTKEY_DEFAULT,
     PASTE_ENTER_DEFAULT_DELAY_MS,
     PASTE_ENTER_MAX_DELAY_MS,
@@ -39,7 +43,7 @@ SETTINGS_PATH = USER_DATA_DIR / "settings.json"
 USER_PROFILES_PATH = USER_DATA_DIR / "profiles.json"
 
 
-ALLOWED_SEND_MODES = {"copy", "paste", "paste_enter"}
+ALLOWED_SEND_MODES = {"copy", "paste", "paste_enter", "chat_send"}
 
 
 def _normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,6 +84,20 @@ def _normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     delay_value = max(PASTE_ENTER_MIN_DELAY_MS, min(PASTE_ENTER_MAX_DELAY_MS, delay_value))
     normalized["delay_ms"] = delay_value
 
+    chat_open_hotkey = normalized.get("chat_open_hotkey", CHAT_OPEN_HOTKEY_DEFAULT)
+    if isinstance(chat_open_hotkey, str) and chat_open_hotkey.strip():
+        normalized["chat_open_hotkey"] = chat_open_hotkey.strip()
+    else:
+        normalized["chat_open_hotkey"] = CHAT_OPEN_HOTKEY_DEFAULT
+
+    chat_open_delay_raw = normalized.get("chat_open_delay_ms", CHAT_OPEN_DELAY_DEFAULT_MS)
+    try:
+        chat_open_delay_value = int(chat_open_delay_raw)
+    except Exception:
+        chat_open_delay_value = CHAT_OPEN_DELAY_DEFAULT_MS
+    chat_open_delay_value = max(CHAT_OPEN_DELAY_MIN_MS, min(CHAT_OPEN_DELAY_MAX_MS, chat_open_delay_value))
+    normalized["chat_open_delay_ms"] = chat_open_delay_value
+
     enabled_raw = normalized.get("enabled", False)
     if isinstance(enabled_raw, bool):
         enabled = enabled_raw
@@ -90,6 +108,17 @@ def _normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     else:
         enabled = False
     normalized["enabled"] = enabled
+
+    chat_send_each_line_raw = normalized.get("chat_send_each_line", False)
+    if isinstance(chat_send_each_line_raw, bool):
+        chat_send_each_line = chat_send_each_line_raw
+    elif isinstance(chat_send_each_line_raw, (int, float)):
+        chat_send_each_line = bool(chat_send_each_line_raw)
+    elif isinstance(chat_send_each_line_raw, str):
+        chat_send_each_line = chat_send_each_line_raw.strip().lower() in {"1", "true", "yes", "on", "да"}
+    else:
+        chat_send_each_line = False
+    normalized["chat_send_each_line"] = chat_send_each_line
 
     return normalized
 

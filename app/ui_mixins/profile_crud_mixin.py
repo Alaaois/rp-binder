@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox
 
-from app.constants import PASTE_ENTER_DEFAULT_DELAY_MS
+from app.constants import CHAT_OPEN_DELAY_DEFAULT_MS, CHAT_OPEN_HOTKEY_DEFAULT, PASTE_ENTER_DEFAULT_DELAY_MS
 
 
 class UIProfileCrudMixin:
@@ -321,6 +321,9 @@ class UIProfileCrudMixin:
             "enabled": False,
             "send_mode": "copy",
             "delay_ms": PASTE_ENTER_DEFAULT_DELAY_MS,
+            "chat_open_hotkey": CHAT_OPEN_HOTKEY_DEFAULT,
+            "chat_open_delay_ms": CHAT_OPEN_DELAY_DEFAULT_MS,
+            "chat_send_each_line": False,
         }
         source_items.append(item)
         self._persist_profiles()

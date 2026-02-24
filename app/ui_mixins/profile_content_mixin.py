@@ -4,6 +4,10 @@ import re
 from tkinter import filedialog, messagebox
 
 from app.constants import (
+    CHAT_OPEN_DELAY_DEFAULT_MS,
+    CHAT_OPEN_DELAY_MAX_MS,
+    CHAT_OPEN_DELAY_MIN_MS,
+    CHAT_OPEN_HOTKEY_DEFAULT,
     PASTE_ENTER_DEFAULT_DELAY_MS,
     PASTE_ENTER_MAX_DELAY_MS,
     PASTE_ENTER_MIN_DELAY_MS,
@@ -36,6 +40,14 @@ class UIProfileContentMixin:
             parsed = PASTE_ENTER_DEFAULT_DELAY_MS
         return max(PASTE_ENTER_MIN_DELAY_MS, min(PASTE_ENTER_MAX_DELAY_MS, parsed))
 
+    @staticmethod
+    def _parse_chat_open_delay_ms(value) -> int:
+        try:
+            parsed = int(value)
+        except Exception:
+            parsed = CHAT_OPEN_DELAY_DEFAULT_MS
+        return max(CHAT_OPEN_DELAY_MIN_MS, min(CHAT_OPEN_DELAY_MAX_MS, parsed))
+
     def _normalize_imported_item(self, item: dict, index: int) -> dict:
         if not isinstance(item, dict):
             raise ValueError(f"Элемент #{index}: ожидается объект.")
@@ -63,11 +75,19 @@ class UIProfileContentMixin:
         normalized["hotkey"] = hotkey.strip() if isinstance(hotkey, str) else ""
 
         send_mode = str(normalized.get("send_mode", "copy")).strip().lower()
-        if send_mode not in {"copy", "paste", "paste_enter"}:
+        if send_mode not in {"copy", "paste", "paste_enter", "chat_send"}:
             send_mode = "copy"
         normalized["send_mode"] = send_mode
 
         normalized["delay_ms"] = self._parse_delay_ms(normalized.get("delay_ms", PASTE_ENTER_DEFAULT_DELAY_MS))
+        chat_open_hotkey = str(normalized.get("chat_open_hotkey", CHAT_OPEN_HOTKEY_DEFAULT)).strip()
+        normalized["chat_open_hotkey"] = chat_open_hotkey or CHAT_OPEN_HOTKEY_DEFAULT
+        normalized["chat_open_delay_ms"] = self._parse_chat_open_delay_ms(
+            normalized.get("chat_open_delay_ms", CHAT_OPEN_DELAY_DEFAULT_MS)
+        )
+        normalized["chat_send_each_line"] = self._normalize_enabled_flag(
+            normalized.get("chat_send_each_line", False)
+        )
         normalized["enabled"] = self._normalize_enabled_flag(normalized.get("enabled", False))
         return normalized
 

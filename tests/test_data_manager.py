@@ -178,6 +178,9 @@ class DataManagerTests(unittest.TestCase):
         self.assertEqual(item["hotkey"], "Ctrl+1")
         self.assertEqual(item["send_mode"], "copy")
         self.assertEqual(item["enabled"], True)
+        self.assertEqual(item["chat_open_hotkey"], "T")
+        self.assertEqual(item["chat_open_delay_ms"], 0)
+        self.assertEqual(item["chat_send_each_line"], False)
 
     def test_item_send_mode_paste_is_kept(self):
         manager = dm.DataManager()
@@ -206,6 +209,27 @@ class DataManagerTests(unittest.TestCase):
 
         self.assertEqual(item["send_mode"], "paste_enter")
         self.assertEqual(item["delay_ms"], 250)
+
+    def test_item_send_mode_chat_send_is_kept(self):
+        manager = dm.DataManager()
+        payload = _sample_payload("Режим чат+отправка")
+        payload["profiles"][0]["categories"][0]["items"][0]["send_mode"] = "chat_send"
+        payload["profiles"][0]["categories"][0]["items"][0]["delay_ms"] = "300"
+        payload["profiles"][0]["categories"][0]["items"][0]["chat_open_hotkey"] = "  t  "
+        payload["profiles"][0]["categories"][0]["items"][0]["chat_open_delay_ms"] = "90"
+        payload["profiles"][0]["categories"][0]["items"][0]["chat_send_each_line"] = "true"
+
+        profile_file = self.temp_path / "chat_send_mode.json"
+        profile_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        data = manager.load_profile(profile_file)
+        item = data["profiles"][0]["categories"][0]["items"][0]
+
+        self.assertEqual(item["send_mode"], "chat_send")
+        self.assertEqual(item["delay_ms"], 300)
+        self.assertEqual(item["chat_open_hotkey"], "t")
+        self.assertEqual(item["chat_open_delay_ms"], 90)
+        self.assertEqual(item["chat_send_each_line"], True)
 
     def test_item_delay_ms_is_clamped(self):
         manager = dm.DataManager()
